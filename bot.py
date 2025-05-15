@@ -5,28 +5,22 @@ import os
 import asyncio
 import nest_asyncio
 
-nest_asyncio.apply()  # Per compatibilità con asyncio in Flask
+nest_asyncio.apply()  # Compatibilità asyncio in Flask
 
-# --- Config ---
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 PORT = int(os.environ.get("PORT", 5000))
 
-# --- Flask ---
 app = Flask(__name__)
 
-# --- Stato ---
 waiting_users = []
 active_chats = {}
 
-# --- Bot Handlers ---
+# --- Bot handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [KeyboardButton("/search")],
-        [KeyboardButton("/stop")]
-    ]
+    keyboard = [[KeyboardButton("/search")], [KeyboardButton("/stop")]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "👋 Benvenuto su Stanzarossa!\nUsa /search per avviare una chat anonima.",
+        "👋 Benvenuto su Stanzarossa!\nUsa /search per iniziare.",
         reply_markup=reply_markup
     )
 
@@ -36,7 +30,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Sei già in chat. Usa /stop per uscire.")
         return
     if user_id in waiting_users:
-        await update.message.reply_text("Sei già in attesa di un partner...")
+        await update.message.reply_text("Attendi, stai già cercando un partner...")
         return
     if waiting_users:
         partner_id = waiting_users.pop(0)
@@ -64,7 +58,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id not in active_chats:
-        await update.message.reply_text("❗ Non sei in una chat anonima. Usa /search.")
+        await update.message.reply_text("❗ Non sei in una chat. Usa /search.")
         return
     partner_id = active_chats[user_id]
     if update.message.text:
@@ -72,7 +66,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Solo messaggi di testo al momento.")
 
-# --- Bot App ---
+# --- Bot setup ---
 application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("search", search))
@@ -81,16 +75,18 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_
 
 # --- Webhook route ---
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
-async def webhook():
+def webhook():
     data = request.get_json(force=True)
     update = Update.de_json(data, application.bot)
+    asyncio.run(handle_update(update))
+    return "ok"
+
+async def handle_update(update):
     if not application.is_initialized:
         await application.initialize()
     await application.process_update(update)
-    return "ok"
 
-# --- Flask run ---
+# --- Run app ---
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT))
-
-
+    app.run(host="0.0.0.0", port=PORT)
+     
