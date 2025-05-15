@@ -1,92 +1,95 @@
-import os
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from flask import Flask, request
-from telegram import Update, Bot
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+import os
+import asyncio
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-# Flask app
-flask_app = Flask(__name__)
+app = Flask(__name__)
 
-# Bot Application PTB 20+
-application = Application.builder().token(BOT_TOKEN).build()
-
+# Variabile globale per memorizzare utenti in attesa e le chat attive
 waiting_users = []
-active_chats = {}
+active_chats = {}  # user_id -> partner_user_id
 
-# Comandi
+# Comando /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Benvenuto su Stanzarossa! Usa /search per iniziare.")
+    await update.message.reply_text(
+        "👋 Benvenuto su Stanzarossa! Usa /search per trovare un partner per chat anonima."
+    )
 
+# Comando /search per cercare un partner
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user_id = update.message.from_user.id
+
     if user_id in active_chats:
-        await update.message.reply_text("🔴 Sei già in chat. Usa /stop per terminare.")
+        await update.message.reply_text("Sei già in chat anonima! Usa /stop per terminarla.")
         return
+
     if user_id in waiting_users:
-        await update.message.reply_text("🕓 Sei già in attesa di un partner.")
+        await update.message.reply_text("Sei già in lista d'attesa, aspetta un partner...")
         return
+
     if waiting_users:
-        partner = waiting_users.pop(0)
-        active_chats[user_id] = partner
-        active_chats[partner] = user_id
-        await context.bot.send_message(chat_id=partner, text="🎯 Partner trovato! Inizia a chattare.")
-        await update.message.reply_text("🎯 Partner trovato! Inizia a chattare.")
+        partner_id = waiting_users.pop(0)
+        active_chats[user_id] = partner_id
+        active_chats[partner_id] = user_id
+
+        # Notifica entrambi
+        await context.bot.send_message(chat_id=user_id, text="💬 Chat anonima iniziata! Scrivi per parlare.")
+        await context.bot.send_message(chat_id=partner_id, text="💬 Chat anonima iniziata! Scrivi per parlare.")
     else:
         waiting_users.append(user_id)
-        await update.message.reply_text("🕓 In attesa di un partner...")
+        await update.message.reply_text("In attesa di un partner... Usa /stop per annullare.")
 
+# Comando /stop per terminare la chat o annullare la ricerca
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in active_chats:
-        partner = active_chats.pop(user_id)
-        active_chats.pop(partner, None)
-        await context.bot.send_message(chat_id=partner, text="🚫 Il tuo partner ha terminato la chat.")
-        await update.message.reply_text("🚫 Chat terminata.")
-    elif user_id in waiting_users:
+    user_id = update.message.from_user.id
+
+    if user_id in waiting_users:
         waiting_users.remove(user_id)
-        await update.message.reply_text("🔕 Ricerca annullata.")
-    else:
-        await update.message.reply_text("ℹ️ Non sei in una chat.")
+        await update.message.reply_text("Ricerca annullata.")
+        return
 
-async def relay(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     if user_id in active_chats:
-        partner = active_chats[user_id]
-        if update.message.text:
-            await context.bot.send_message(chat_id=partner, text=update.message.text)
-        elif update.message.photo:
-            await context.bot.send_photo(chat_id=partner, photo=update.message.photo[-1].file_id)
-        elif update.message.sticker:
-            await context.bot.send_sticker(chat_id=partner, sticker=update.message.sticker.file_id)
-    else:
-        await update.message.reply_text("ℹ️ Usa /search per iniziare una chat anonima.")
+        partner_id = active_chats.pop(user_id)
+        active_chats.pop(partner_id, None)
+        await update.message.reply_text("Chat terminata.")
+        await context.bot.send_message(chat_id=partner_id, text="Il partner ha terminato la chat.")
+        return
 
-# Handlers
+    await update.message.reply_text("Non sei in chat né in attesa.")
+
+# Gestione dei messaggi anonimi (inoltro al partner)
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id not in active_chats:
+        await update.message.reply_text("Non sei in chat anonima. Usa /search per cercare un partner.")
+        return
+
+    partner_id = active_chats[user_id]
+    # Inoltra solo testo, per semplicità
+    if update.message.text:
+        await context.bot.send_message(chat_id=partner_id, text=update.message.text)
+    else:
+        await update.message.reply_text("Solo messaggi di testo supportati al momento.")
+
+# Crea l'Application (builder)
+application = Application.builder().token(BOT_TOKEN).build()
+
+# Aggiungi handler
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("search", search))
 application.add_handler(CommandHandler("stop", stop))
-application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, relay))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
-# Route per Telegram webhook
-@flask_app.post(f"/{BOT_TOKEN}")
-async def webhook() -> str:
-    update = Update.de_json(data=request.get_json(force=True), bot=application.bot)
-    await application.process_update(update)
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    data = request.get_json(force=True)
+    update = Update.de_json(data, application.bot)
+    asyncio.run(application.process_update(update))
     return "ok"
 
-# Route base
-@flask_app.get("/")
-def index():
-    return "✅ Stanzarossa Bot è attivo su webhook!"
-
-# Avvio per render
 if __name__ == "__main__":
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(port=5000)
 
