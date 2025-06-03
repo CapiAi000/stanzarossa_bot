@@ -20,7 +20,7 @@ active_chats = {}
 
 # Handlers Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Benvenuto su Stanzarossa! Usa /search per iniziare.")
+    await update.message.reply_text("👋 Benvenuto su Stanzarossa! Usa /search per iniziare a chattare.")
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -42,7 +42,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id in waiting_users:
         waiting_users.remove(user_id)
-        await update.message.reply_text("Hai annullato la ricerca.")
+        await update.message.reply_text("Hai annullato la ricerca. /search per continuare a chattare")
     elif user_id in active_chats:
         partner_id = active_chats.pop(user_id)
         active_chats.pop(partner_id, None)
